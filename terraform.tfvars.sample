@@ -1,0 +1,24 @@
+# terraform.tfvars - all variables defined here
+
+# Hetzner Cloud Access Token - must be obtained from the website
+hcloud_token = "INSERT-YOUR-API-TOKEN"
+hcloud_ssh_keyfile = "/somelocaldir/id_xxxx.pub"
+hcloud_ssh_allowedkeys = "['ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG98Y8egOBwfMdR5Wv7Wam/Y4ww5nzukBHBGDx/vnJvm test@test', 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG98Y8egOBwfMdR5Wv7Wam/Y4ww5nzukBHBGDx/vnJvm key@system', 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG98Y8egOBwfMdR5Wv7Wam/Y4ww5nzukBHBGDx/vnJvm key2@system2']"
+
+# All other variables
+hcloud_server = "cx21"
+hcloud_os = "debian-9"
+hcloud_ipname = "mailcow-floating-ip"
+hcloud_location = "nbg1"
+hcloud_volumesize = "100"
+hcloud_volumename = "mailcow-vol-1"
+hcloud_volumeformat = "ext4"
+hcloud_servername = "mailcow-1"
+hcloud_ssh_port = "22222"
+hcloud_ssh_user = "moo"
+mailcow_hostname = "fqdn.mail.server"
+mailcow_tz = "UTC"
+mailcow_backup_dir = "/mnt/backup"
+mailcow_backup_file = "/srv/backup.img"
+mailcow_backup_size = "1"
+

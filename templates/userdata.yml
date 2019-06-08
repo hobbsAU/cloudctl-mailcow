@@ -1,0 +1,60 @@
+#cloud-config
+
+apt:
+  sources:
+    docker.list: 
+      source: "deb [arch=amd64] https://download.docker.com/linux/debian $RELEASE stable"
+      keyid: 0EBFCD88 # GPG key ID published on a key server
+
+# Upgrade the instance on first boot (ie run apt-get upgrade)
+package_update: true
+package_upgrade: true
+ 
+packages:
+  - apt-transport-https 
+  - ca-certificates 
+  - curl 
+  - gnupg2 
+  - software-properties-common
+  - vim
+  - tar
+  - docker-ce
+  - haveged
+  - git
+  - unattended-upgrades
+
+# Timezone: set the timezone for this instance and must also restart rsyslog to take effect in logs
+timezone: ${MAILCOW_TZ}
+
+users:
+  - name: ${SSH_USER}
+    groups: sudo
+    shell: /bin/bash
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+    lock_passwd: true
+    ssh-authorized-keys: ${HCLOUD_SSH_ALLOWEDKEYS}
+
+write_files:
+  - owner: root:root
+    path: /opt/scripts/system.sh
+    permissions: '0500'
+    encoding: 'gzip+base64'
+    content: |
+      ${CONTENT_SYSTEM}
+
+  - owner: root:root
+    path: /opt/scripts/mailcow.sh
+    permissions: '0500'
+    encoding: 'gzip+base64'
+    content: |
+      ${CONTENT_MAILCOW}
+
+runcmd: 
+  - [ systemctl, restart, rsyslog.service ]
+  - [ /bin/bash, /opt/scripts/system.sh ]
+
+swap:
+  filename: /var/swap.img
+  size: "auto" # or size in bytes
+  maxsize: 4294967296
+
