@@ -74,6 +74,11 @@ set -xeuo pipefail
         chmod 0400 /etc/ssh/sshd_config
         systemctl restart sshd.service
 
+	# Clear out old ssh keys
+	/bin/rm -v /etc/ssh/ssh_host_*
+	dpkg-reconfigure openssh-server
+        systemctl restart sshd.service
+
 	# Install and configure fail2ban
 	apt-get install -y --install-recommends fail2ban
 	cat <<-"EOF" > /etc/fail2ban/jail.d/jail-debian.local
