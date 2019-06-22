@@ -8,27 +8,14 @@ provider "hcloud" {
 # Define SSH keys
 resource "hcloud_ssh_key" "default" {
   name = "Terraform Key"
-  public_key = "${file("${var.hcloud_ssh_keyfile}")}"
-}
-
-data "template_file" "mailcow_config" {
-  template = "${file("templates/mailcow.sh")}"
-  vars = {
-    MOUNT_DEVICE = "${hcloud_volume.data.linux_device}"
-    MAILCOW_HOSTNAME = "${var.mailcow_hostname}"
-    MAILCOW_TZ = "${var.mailcow_tz}"
-    MAILCOW_BACKUP_DIR = "${var.mailcow_backup_dir}"
-    MAILCOW_BACKUP_FILE = "${var.mailcow_backup_file}"
-    MAILCOW_BACKUP_SIZE = "${var.mailcow_backup_size}"
-    FLOATING_IPV4 = "${hcloud_floating_ip.master.ip_address}"
-  }
+  public_key = "${file("${var.hcloud_sshkey_public}")}"
 }
 
 data "template_file" "system_config" {
   template = "${file("templates/system.sh")}"
   vars = {
-    SSH_USER = "${var.hcloud_ssh_user}"
-    SSH_PORT = "${var.hcloud_ssh_port}"
+    SSH_USER = "${var.system_ssh_user}"
+    SSH_PORT = "${var.system_ssh_port}"
     FLOATING_IPV4 = "${hcloud_floating_ip.master.ip_address}"
   }
 }
@@ -37,11 +24,11 @@ data "template_file" "system_config" {
 data "template_file" "broker_cloudinit" {
   template = "${file("templates/userdata.yml")}"
   vars = {
-    MAILCOW_TZ = "${var.mailcow_tz}"
-    SSH_USER = "${var.hcloud_ssh_user}"
-    HCLOUD_SSH_ALLOWEDKEYS = "${var.hcloud_ssh_allowedkeys}"
-    CONTENT_MAILCOW = "${base64gzip(data.template_file.mailcow_config.rendered)}"
+    SYSTEM_TZ = "${var.system_tz}"
+    SSH_USER = "${var.system_ssh_user}"
+    SSH_ALLOWEDKEYS = "${var.system_ssh_allowedkeys}"
     CONTENT_SYSTEM = "${base64gzip(data.template_file.system_config.rendered)}"
+    CONTENT_MAILCOW = "${base64gzip(file("templates/mailcow.sh"))}"
     }
   }
 
@@ -82,7 +69,7 @@ resource "hcloud_floating_ip" "master" {
 resource "hcloud_rdns" "floating_master" {
   floating_ip_id = "${hcloud_floating_ip.master.id}"
   ip_address = "${hcloud_floating_ip.master.ip_address}"
-  dns_ptr = "${var.mailcow_hostname}"
+  dns_ptr = "${var.hcloud_fqdn}"
 }
 
 # Attach floating IPv4 to server instance

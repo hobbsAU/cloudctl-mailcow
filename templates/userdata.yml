@@ -24,15 +24,17 @@ packages:
   - unattended-upgrades
 
 # Timezone: set the timezone for this instance and must also restart rsyslog to take effect in logs
-timezone: ${MAILCOW_TZ}
+timezone: ${SYSTEM_TZ}
 
 users:
+  - name: root
+    lock_passwd: true
   - name: ${SSH_USER}
     groups: sudo
     shell: /bin/bash
     sudo: ['ALL=(ALL) NOPASSWD:ALL']
     lock_passwd: true
-    ssh-authorized-keys: ${HCLOUD_SSH_ALLOWEDKEYS}
+    ssh-authorized-keys: ${SSH_ALLOWEDKEYS}
 
 write_files:
   - owner: root:root

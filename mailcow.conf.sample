@@ -1,0 +1,38 @@
+# mailcow.conf - all variables defined here
+
+# Hcloud secrets
+# Note: Hetzner Cloud Access Token must be obtained from the website
+# Note: SSH keys should be labelled as follows: id_<key_algorithm>_<servername>_<purpose>.<scope> --> id_ed25519_server_borg.pvt
+TF_VAR_hcloud_token="INSERT-YOUR-API-TOKEN"
+TF_VAR_hcloud_sshkey_public="/somelocaldir/id_xxxx.pub"
+TF_VAR_hcloud_sshkey_private="/somelocaldir/id_xxxx.pvt"
+
+# Hcloud variables
+TF_VAR_hcloud_server="cx21"
+TF_VAR_hcloud_os="debian-9"
+TF_VAR_hcloud_ipname="mailcow-floating-ip"
+TF_VAR_hcloud_location="nbg1"
+TF_VAR_hcloud_volumesize="100"
+TF_VAR_hcloud_volumename="mailcow-vol-1"
+TF_VAR_hcloud_volumeformat="ext4"
+TF_VAR_hcloud_servername="mailcow-1"
+TF_VAR_hcloud_fqdn="fqdn.mail.server"
+
+# System variables
+TF_VAR_system_tz="UTC"
+TF_VAR_system_ssh_port="22222"
+TF_VAR_system_ssh_user="moo"
+TF_VAR_system_ssh_allowedkeys="['ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG98Y8egOBwfMdR5Wv7Wam/Y4ww5nzukBHBGDx/vnJvm test@test', 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG98Y8egOBwfMdR5Wv7Wam/Y4ww5nzukBHBGDx/vnJvm key@system', 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG98Y8egOBwfMdR5Wv7Wam/Y4ww5nzukBHBGDx/vnJvm key2@system2']"
+
+# Backup variables
+backup_dir="/mnt/backup"
+backup_file="/srv/backup.img"
+backup_size="1"
+backup_repo="user@somehost.com:repo"
+backup_hostkey="ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG98Y8egOBwfMdR5Wv7Wam/Y4ww5nzukBHBGDx/vnJvm" 
+backup_sshkey_private="id_mailcow"
+backup_repo_passphrase="borg_passphrase"
+
+# Local Keyfiles - these will be sent to the remote server
+keyfile_sshkey_private="/somlocaldir/id_ed25519_mailcow_backup.pvt"
+keyfile_repo_passphrase="/somelocaldir/backup_passphrase"

@@ -30,48 +30,60 @@ BLUE="\033[0;34m"         # Blue
 PURPLE="\033[0;35m"       # Purple
 
 # Configure Global variables
-ENV_CONF=${1:-terraform.tfvars}
-declare -A TF_CONFIG
+ENV_FILE=${1:-mailcow.conf}
+declare -A ENV_CFG
 
 
 ########################
 ### SCRIPT FUNCTIONS ###
 ########################
 
-function read_env_conf() {
-	if [[ -f "${ENV_CONF}" ]]; then
-	log "Reading user config...." >&2
+function read_conf() {
 
-		# check if the file contains something we don't want
-		if $EGREP_BIN -q -iv "(^\s*#|^\s*$|^\s*[a-z_]*[[:space:]]=[[:space:]]\"[^;&\(\`]*\"$)" "${ENV_CONF}"; then
-			log "Config file is corrupt, please check it..." >&2
-			exit 1
-		else
-			# Parse the tfvars config converting to simple key value pair and stripping quotes
-			for item in $($AWK_BIN 'BEGIN {FS=OFS="="} !/^(#| *$)/ && /^.+=.+$/ \
-				{ gsub(/^[ \t]+|[ \t]+$/, "", $1); gsub(/\./, "_", $1); gsub(/^[ \t]+|[ \t]+$/, "", $2); gsub(/"/, "", $2);gsub(/"/, "", $2);  if ($1 && $2) print $0 }' ${ENV_CONF})
-			do
-				key=${item%=*}
-				value=${item#*=}
-				TF_CONFIG[$key]=${value}
-			done
-			((DEBUG)) && echo ${TF_CONFIG[mailcow_hostname]} && pause || echo
-		fi
-	else
-		show_help
-		exit 1
-	fi
+# Check for config file
+[[ -f "${ENV_FILE:-}" ]] && log "Reading config.." || { show_help; exit 1; }
 
+# Check if the config file contains something we don't want
+[[ "${EGREP_BIN} -q -iv '(^\s*#|^\s*$|^\s*[a-z_][^[:space:]]*=\"[^;&\(\`]*\"$)' "${ENV_FILE}"" ]] || { log "Config file is corrupt, please check it..."; exit 1; }
+
+# Parse the config file converting to simple key value pair and stripping quotes
+for item in $(${AWK_BIN} 'BEGIN {FS=OFS="="} !/^(#| *$)/ && /^.+=.+$/ \
+{ gsub(/^[ \t]+|[ \t]+$/, "", $1); gsub(/\./, "_", $1); gsub(/^[ \t]+|[ \t]+$/, "", $2); gsub(/"/, "", $2);gsub(/"/, "", $2);  if ($1 && $2) print $0 }' ${ENV_FILE})
+do
+	key=${item%=*}
+	value=${item#*=}
+	ENV_CFG[${key}]=${value}
+	#[[ ${key} == TF_VAR* ]] && { export $(printf "%q=\"%q\"\n" "${key}" "${ENV_CFG[${key}]}"); }
+	[[ ${key} == TF_VAR* ]] && { export ${key}=${value}; }
+done
+		((DEBUG)) && { for x in "${!ENV_CFG[@]}"; do printf "%q=\"%q\"\n" "$x" "${ENV_CFG[$x]}" ; done; pause; } || echo
+}
+
+function read_tf_conf() {
+if [[ $(terraform output 2>/dev/null) ]]; then
+
+# Parse the config converting to simple key value pair and stripping quotes
+	for item in $($AWK_BIN 'BEGIN {FS=OFS="="} !/^(#| *$)/ && /^.+=.+$/ \
+	{ gsub(/^[ \t]+|[ \t]+$/, "", $1); gsub(/\./, "_", $1); gsub(/^[ \t]+|[ \t]+$/, "", $2); \
+	gsub(/"/, "", $2);gsub(/"/, "", $2);  if ($1 && $2) print $0 }' <<<$(terraform output))
+	do
+		key=${item%=*}
+		value=${item#*=}
+		ENV_CFG[$key]=${value}
+	done
+fi
+
+((DEBUG)) && { for x in "${!ENV_CFG[@]}"; do printf "%q=\"%q\"\n" "$x" "${ENV_CFG[$x]}"; done; } || echo
 }
 
 function show_help() {
-	echo "Usage: $0 [OPTION] [tfvars-file]"
+	echo "Usage: $0 [OPTION] [mailcow conf file]"
 	echo 
 	echo "  -d	debug mode" 
 	echo 
 	echo "  -h	display this help and exit"
 	echo 
-	echo "If no .tfvars file is provided this script assumes terraform.tfvars is available in the same directory."
+	echo "If no .conf file is provided this script assumes mailcow.conf is available in the same directory."
 }
 
 function pause() {
@@ -99,80 +111,118 @@ function confirm() {
 	[[ "$response" =~ ^([yY][eE][sS]|[yY])+$ ]] && true || false
 }
 
-function server_update() {
-	log "Updating server.."
-	server_ssh "sudo apt-get update && sudo apt-get -y upgrade && sudo apt-get -y dist-upgrade && sudo apt-get clean && sudo apt-get -y autoremove" && \
-	{ log "Server successfully updated."; return 0; } || \
-	{ log "Problem updating server!"; return 1; }
-}
-
 # server_ssh "[command to execute]"
 function server_ssh() {
 local error_code=0
 
+	# Refresh config
+	read_tf_conf
+	
 	# Check if server is known
-	if [[ $($TF_BIN output host_ipv4) && $($TF_BIN state show hcloud_server.mailcow 2>/dev/null) ]]; then
-		local args=(-o "StrictHostKeyChecking no" -p ${TF_CONFIG[hcloud_ssh_port]:-} ${TF_CONFIG[hcloud_ssh_user]:-}@$($TF_BIN output host_ipv4))
+	if [[ "${ENV_CFG[tf_host_ipv4]:-}" && $(${TF_BIN} state show hcloud_server.mailcow 2>/dev/null) ]]; then
+		local args=(-o "StrictHostKeyChecking no" -p ${ENV_CFG[TF_VAR_system_ssh_port]:-} -i ${ENV_CFG[TF_VAR_hcloud_sshkey_private]:-} ${ENV_CFG[TF_VAR_system_ssh_user]:-}@${ENV_CFG[tf_host_ipv4]:-})
 	else
-		log "Server not available - please create one."; return 0;
+		log "Server not available - please create one."; return 1;
 	fi
 
 	# Check for parameters to determine whether SSH or execute remote SSH command
 	if [[ $# -eq 0 ]]; then
-		log "Connecting to ${TF_CONFIG[mailcow_hostname]:-}"
+		log "Connecting to ${ENV_CFG[tf_host_ipv4]:-}"
 		trap - SIGINT
 	elif [[ $# -eq 1 && ${1:-} ]]; then
-		log "Executing \""$1"\" on ${TF_CONFIG[mailcow_hostname]:-}"
+		log "Executing \""$1"\" on ${ENV_CFG[tf_host_ipv4]:-}"
 		args+=($1)
 		trap - SIGINT
 	fi
 
 	# Execute SSH
-	$SSH_BIN "${args[@]}" && { trap ' ' SIGINT; return 0; } || \
+	${SSH_BIN} "${args[@]}" && { trap ' ' SIGINT; return 0; } || \
 	{ error_code=$?; trap ' ' SIGINT; return $error_code; }
 }
 
-function terraform_destroy() {
-local args=()
+function client_terraform() {
 	
-	# Check for parameters to determine what we need to detroy
-	if [[ $# -eq 0 ]]; then
-		log "Function requires paramaters."
-		return 1;
-	elif [[ $# -eq 1 && ${1:-} ]]; then
-		log "Destroying "$1""
-		args+=(-target $1)
+	# Refresh config
+	read_tf_conf
+	
+	# Check for parameters
+	[[ $# -eq 0 ]] && { log "Function requires paramaters."; return 1; }
+
+	# Check for parameters to determine what we need to do
+while (( "$#" )); do
+	case "$1" in
+	deploy_all)
+		log "Deploying all terraform items."
+		${TF_BIN} apply -auto-approve || { log "Error deploying!"; return 1; };
+		shift
+		;;
+	destroy_all)
+                log "Destroying all terraform items."
+                ${TF_BIN} destroy && ssh-keygen -R "[${ENV_CFG[tf_host_ipv4]}]:${ENV_CFG[TF_VAR_system_ssh_port]:-}" \
+                || { log "Error executing terraform destroy!"; return 1; }; 
+		shift
+		;;
+	destroy_server)
+		log "Destroying server only."
 		# Shutdown mailcow, docker and dismount volume
-		[[ $($TF_BIN state show hcloud_server.mailcow 2>/dev/null) ]] && \
+		[[ $(${TF_BIN} state show hcloud_server.mailcow 2>/dev/null) ]] && \
 		{ server_ssh "cd /opt/mailcow-dockerized && sudo docker-compose down && sudo systemctl stop docker.service" || \
 		{ log "Error shutting down services!"; { confirm "Are you sure you would like to continue server destruction? [y/N] " || return 1; } } } || \
 		{ log "Server doesn't exist!"; return 1; }; 
-		[[ $($TF_BIN output volume_device) ]] && \
-		{ server_ssh "sudo umount \$(/bin/findmnt -nr -o target -S $($TF_BIN output volume_device))" || \
+		[[ ${ENV_CFG[tf_volume_device]:-} ]] && \
+		{ server_ssh "sudo umount \$(/bin/findmnt -nr -o target -S ${ENV_CFG[tf_volume_device]:-})" || \
 		{ log "Cannot dismount volume"; return 1; } } || { log "Volume doesn't exist!"; return 1; };
-	elif [[ $# -eq 2 && ${1:-} && ${2:-} ]]; then
-		log "Destroying \""$1"\" and \""$2"\""
-		args+=(-target $1 -target $2)
-	fi
-
-	# Check if server is known
-	if [[ $($TF_BIN output host_ipv4) ]]; then
-		ssh-keygen -R "[$($TF_BIN output host_ipv4)]:${TF_CONFIG[hcloud_ssh_port]:-}";
-	fi
-
-	$TF_BIN destroy -var-file="${ENV_CONF}" "${args[@]}" || { log "Error executing terraform destroy!"; return 1; }; 
-	return 0;
+		${TF_BIN} destroy -target hcloud_server.mailcow && ssh-keygen -R "[${ENV_CFG[tf_host_ipv4]}]:${ENV_CFG[TF_VAR_system_ssh_port]:-}" || \
+		{ log "Error executing terraform destroy!"; return 1; }; 
+		shift
+		;;
+	destroy_server_volume)
+		log "Destroying server and volume."
+		${TF_BIN} destroy -var-file="${ENV_FILE}" -target hcloud_server.mailcow -target hcloud_volume.data && \
+		ssh-keygen -R "[${ENV_CFG[tf_host_ipv4]}]:${ENV_CFG[TF_VAR_system_ssh_port]:-}" || \
+		{ log "Error executing terraform destroy!"; return 1; }; 
+		shift
+		;;
+	*)
+                echo "Error: Unsupported argument $1" >&2
+		shift 
+		;;
+	esac
+done
+	
 }
 
-function mailcow_ctl() {
-	# Check for parameters to determine what we need to detroy
-	if [[ $# -eq 0 ]]; then
-		log "Function requires parameters."
-		return 1;
-	else
-		server_ssh "sudo /opt/scripts/mailcow.sh ${@}" ||  { return $?; };
-	fi
+function server_backup() {
+local env_vars=""
+
+	# Check server exists
+	[[ $(${TF_BIN} state show hcloud_server.mailcow 2>/dev/null) ]] || { log "Server doesn't exist!"; return 1; };
+
+	# Copy over keyfiles
+	server_ssh "sudo tee /opt/scripts/${ENV_CFG[backup_sshkey_private]}" <${ENV_CFG[keyfile_sshkey_private]}
+	server_ssh "sudo tee /opt/scripts/${ENV_CFG[backup_repo_passphrase]}" <${ENV_CFG[keyfile_repo_passphrase]}
+
+	# Install backup
+	env_vars="backup_dir=\"${ENV_CFG[backup_dir]:-}\" backup_file=\"${ENV_CFG[backup_file]:-}\" backup_size=\"${ENV_CFG[backup_size]:-}\" backup_repo=\"${ENV_CFG[backup_repo]:-}\" backup_hostkey=\"${ENV_CFG[backup_hostkey]:-}\" backup_sshkey_private=\"${ENV_CFG[backup_sshkey_private]:-}\" backup_repo_passphrase=\"${ENV_CFG[backup_repo_passphrase]:-}\" system_tz=\"${ENV_CFG[system_tz]:-}\""
+	server_ssh "sudo ${env_vars:-} /opt/scripts/mailcow.sh backup_install" || { log "Error installing mailcow backup service!"; return 1; } 
+
 }
+
+function server_mailcow() {
+local env_vars=""
+
+	# Refresh config
+	read_tf_conf
+	
+	# Check server exists
+	[[ $(${TF_BIN} state show hcloud_server.mailcow 2>/dev/null) ]] || { log "Server doesn't exist!"; return 1; };
+
+	# Install Mailcow
+	env_vars="tf_dns_ptr=\"${ENV_CFG[tf_dns_ptr]:-}\" tf_volume_device=\"${ENV_CFG[tf_volume_device]:-}\" tf_floating_ipv4=\"${ENV_CFG[tf_floating_ipv4]:-}\""
+	server_ssh "sudo ${env_vars:-} /opt/scripts/mailcow.sh mailcow_install" || { log "Error installing mailcow!"; return 1; }
+	
+}
+
 
 function menu_monitor() {
 local choice=""
@@ -191,7 +241,7 @@ while [ "$choice" != x ]; do
         case $choice in
                 1) server_ssh "cd /opt/mailcow-dockerized/ && sudo docker-compose logs -f --tail=100" || { log "Error viewing mailcow logs!"; }; pause ;;
                 2) server_ssh "sudo journalctl -u borgmatic -u mcbackup" || { log "Error viewing backup logs!"; }; pause ;;
-                3) server_ssh "sudo less /var/log/cloud-init-output*"; pause ;;
+                3) server_ssh "sudo less /var/log/cloud-init-output*" || { log "Error viewing cloud-init logs!"; }; pause ;;
                 x) return 0;;
                 *) echo -e "${RED}Error...${STD}" && sleep 0.5
         esac
@@ -217,14 +267,16 @@ while [ "$choice" != x ]; do
         echo -e "\n x.  Exit\n"
         read -p "Enter choice [ 1 - 9 ]: " choice
         case $choice in
-                1) 	mailcow_ctl "mailcow_update" || { [[ $? -eq 3 ]] && log "No mailcow updates available."; } || { log "Error updating mailcow!"; }; pause ;;
-                2) 	mailcow_ctl "mailcow_backup" || { log "Error backing up mailcow!"; }; pause ;;
+                1) 	server_ssh "sudo /opt/scripts/mailcow.sh mailcow_update" || \
+			{ [[ $? -eq 3 ]] && log "No mailcow updates available."; } || { log "Error updating mailcow!"; }; pause ;;
+                2) 	server_ssh "sudo /opt/scripts/mailcow.sh mailcow_backup" || { log "Error backing up mailcow!"; }; pause ;;
                 3) 	server_ssh "cd /opt/mailcow-dockerized/ && sudo docker-compose pull && sudo docker-compose up -d && sudo docker-compose logs -f --tail=100" || \
 			{ log "Error starting mailcow!"; }; pause ;;
 		4) 	confirm "Are you sure you would like to stop mailcow? [y/N] " && \
 			{ server_ssh "cd /opt/mailcow-dockerized/ && sudo docker-compose down" || \
 			{ log "Error stopping mailcow!"; }; } || { log "Cancelled."; }; pause ;;
-                5) 	server_update || { log "Error updating server!"; }; pause ;;
+                5) 	server_ssh "sudo apt-get update && sudo apt-get -y upgrade && sudo apt-get -y dist-upgrade && sudo apt-get clean && sudo apt-get -y autoremove" && \
+			{ log "Server successfully updated."; } || { log "Error updating server!"; }; pause ;;
                 9) 	server_ssh || { log "SSH session error: $?"; };  pause ;;
                 x) 	return 0;;
                 *) 	echo -e "${RED}Error...${STD}" && sleep 0.5
@@ -236,6 +288,7 @@ done
 # Function to display Deploy menu
 function menu_deploy() {
 local choice=""
+local env_vars=""
 
 while [ "$choice" != x ]; do 
         clear
@@ -248,30 +301,27 @@ while [ "$choice" != x ]; do
         echo " 3.  Destroy Server / Volume	- Delete server and data volume"
         echo " 4.  DESTROY ALL		- Delete all mailcow infrastructure"
         echo " 5.  Install Mailcow		- Install Mailcow (without starting)"
-        echo " 6.  Install Mailcow / Backup	- Install Mailcow (Without starting) and install, start backup service"
-        echo " 8.  Show All			- Terraform show"
+        echo " 6.  Install Backup		- Install and start backup service"
         echo " 9.  SSH to server   		- SSH to server"
         echo -e "\n x.  Exit\n"
         read -p "Enter choice [ 1 - 9 ]: " choice
         case $choice in
 		1) 	
-			$TF_BIN apply -var-file="${ENV_CONF}" -auto-approve || { log "Error deploying!"; }; pause ;;
+			client_terraform "deploy_all" || { log "Error deploying!"; }; pause ;;
 		2) 
-			terraform_destroy "hcloud_server.mailcow" || { log "Error destroying server!"; }; pause ;;
+			client_terraform "destroy_server" || { log "Error destroying server!"; }; pause ;;
 		3) 
 			confirm "Are you sure you would like to DESTROY SERVER and VOLUME? [y/N] " && \
-			{ terraform_destroy "hcloud_server.mailcow" "hcloud_volume.data" || { log "Error destroying server and volume!"; }; } || \
+			{ client_terraform "destroy_server_volume" || { log "Error destroying server and volume!"; }; } || \
 			{ log "Abandoning!"; }; pause ;;
 		4) 
 			confirm "Are you sure you would like to DESTROY ALL? [y/N] " && \
-			{ ssh-keygen -R "[$($TF_BIN output host_ipv4)]:${TF_CONFIG[hcloud_ssh_port]:-}"; { $TF_BIN destroy -var-file="${ENV_CONF}" || { log "Error destroying all!"; }; }; } || \
+			{ client_terraform "destroy_all" || { log "Error destroying all objects!"; }; } || \
 			{ log "Abandoning!"; }; pause ;;
 		5) 
-			mailcow_ctl "mailcow_install" || { log "Error installing mailcow!"; }; pause ;;
+			server_mailcow || { log "Error installing mailcow!"; }; pause;; 
 		6) 
-			mailcow_ctl "mailcow_install backup_install" || { log "Error installing mailcow or backup service!"; }; pause ;;
-		8) 
-			$TF_BIN show || { log "Terraform error!"; }; pause ;;
+			server_backup || { log "Error installing backup!"; }; pause;; 
                 9) 	
 			server_ssh || { log "SSH session error: $?"; };  pause ;;
                 x) 	
@@ -326,10 +376,8 @@ while getopts "hd" opt; do
 shift $((OPTIND -1))
 done
 
-# Load configuration
-read_env_conf
-
-# Load main menu
+# Load configuration and main menu
+read_conf
 menu_main
 
 # Exit gracefully

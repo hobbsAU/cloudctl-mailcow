@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # system.sh - bash script to configure O/S related setting and software
+# Note: this file is rendered by Terraform $${ ... } sequence is an interpolation
 
 #Set Bash strict modes
 set -xeuo pipefail
@@ -31,6 +32,14 @@ set -xeuo pipefail
 	chmod 0644 /etc/network/interfaces.d/60-my-floating-ip.cfg
 	systemctl daemon-reload; systemctl restart networking.service
 
+	# Configure SSH umask
+	if [[ "grep -q 'session    optional     pam_umask.so umask=0077' /etc/pam.d/sshd" ]];  then
+	cat <<-EOF >> /etc/pam.d/sshd
+	# Setting UMASK for all ssh based connections (ssh, sftp, scp)
+	session    optional     pam_umask.so umask=0077
+	EOF
+	fi
+
 	# Configure SSH
 	cat <<-EOF > /etc/ssh/sshd_config
 	Port ${SSH_PORT}
@@ -59,6 +68,8 @@ set -xeuo pipefail
 	AllowUsers ${SSH_USER} 
 	ClientAliveInterval 300
 	ClientAliveCountMax 3
+	UsePAM yes
+	AuthenticationMethods publickey
 	EOF
         chmod 0400 /etc/ssh/sshd_config
         systemctl restart sshd.service

@@ -6,20 +6,29 @@ Cloudctl-mailcow is a menu driven program to provision, maintain and monitor a [
 ### Prerequisites
 - Local linux based host with Terraform and bash for provisioning and remote management of your mailcow server.
 - A Hetzner account and API token for Hetzner cloud (you can create this in their cloud console: Access --> API Tokens --> Generate API Token.
-- SSH key(s) - these will be used for access to your mailcow server. You can generate your keys with: $ ssh-keygen -o -a 100 -t ed25519 -f ./id_ed25519 -C "name@clienthost"
-- DNS name as your mailserver will need a rDNS (PTR) entry for the floating IP.
+- SSH key(s) - these will be used for access to your mailcow server. You can generate your keys with: $ ssh-keygen -o -a 100 -t ed25519 -f ./id_ed25519_mailcow_user -C "name@clienthost"
+- Fully qualified domain name (FQDN) - your mailserver will need a rDNS (PTR) entry for the floating IP.
 - Note: This program will provision infrastructure through Hetzner cloud and costs may be incurred. Please use at your own risk.
 
 ### Quick Start
 ```sh
 $ git clone https://github.com/hobbsAU/cloudctl-mailcow.git
 $ cd cloudctl-mailcow
-$ cp terraform.tfvars.sample terraform.tfvars
-$ vim terraform.tfvars
+$ cp mailcow.conf.sample mailcow.conf
+$ vim mailcow.conf
 $ ./cloudctl-mailcow
 ```
 
 ## Design
+
+### cloudctl-mailcow Menu
+cloudctl-mailcow is used for three main functions Deploy, Manage and Monitor.
+
+The "Deploy" menu is used to provision all mailcow infrastructure including server, volume, mailcow software, and backup scripts. The Deploy menu is also used to remove any existing infrastructure items as well.
+
+The "Manage" menu is used for mailcow maintenance operations including updating, backup, start/stop, and server updates.
+
+The "Monitor" menu is used for viewing mailcow logs, backup logs, and cloud-init logs.
 
 ### Environment provisioning
 Infrastructure provisioning is handled by Terraform. 
@@ -75,7 +84,8 @@ This scipt includes:
 - Required packages
 - Mailcow installer
 - Mailcow updater
-- Backup installer
+- Backup installer for a borgbackup compatible backup repository
+
 
 ### Mailcow updates
 Mailcow updates are handled by the cloudctl-mailcow menus.

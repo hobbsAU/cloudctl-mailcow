@@ -6,26 +6,28 @@
 set -xeuo pipefail
 
 # Set umask
-umask 0022
+umask 0077
 
 # Define Globals
 PARAMS=""
 
 function Mailcow_Install() {
-	# Check environment 
-	mailcow_hostname=${MAILCOW_HOSTNAME} mailcow_tz=${MAILCOW_TZ} mount_device=${MOUNT_DEVICE}
-	[[ "$${mailcow_hostname:-}" && "$${mailcow_tz:-}" && "$${mount_device:-}" ]] || { echo "Variable not set"; exit 1; }
-	
-	#Set mailcow environment variables for unattended installation
-	export MAILCOW_HOSTNAME=$mailcow_hostname MAILCOW_TZ=$mailcow_tz
+	# Check environment and set mailcow environment variables for unattended installation
+	[[ "${tf_volume_device:-}" ]] || { echo "Variable tf_volume_device not set"; exit 1; }
+	[[ "${tf_floating_ipv4:-}" ]] || { echo "Variable tf_floating_ipv4 not set"; exit 1; }
+	[[ "${tf_dns_ptr:-}" ]] && export MAILCOW_HOSTNAME=$tf_dns_ptr || { echo "Variable tf_dns_ptr not set"; exit 1; } 
+	[[ -f /etc/timezone ]] && export MAILCOW_TZ=`cat /etc/timezone` || { echo "Cannot find timezone"; exit 1; }
 
 	# Guard against udev race condition
-	if [[ $(/bin/findmnt -nr -o target -S $mount_device) ]]; then
+	if [[ $(/bin/findmnt -nr -o target -S $tf_volume_device) ]]; then
 		#Set volume location
-		mnt_dir=$(/bin/findmnt -nr -o target -S $mount_device)
+		mnt_dir=$(/bin/findmnt -nr -o target -S $tf_volume_device)
 	else
 		echo "Error mount not found!"; exit 1;
 	fi
+
+	# Set umask
+	umask 0022
 
         # Install docker-compose
         curl -L https://github.com/docker/compose/releases/download/$(curl -Ls https://www.servercow.de/docker-compose/latest.php)/docker-compose-$(uname -s)-$(uname -m) > /usr/local/bin/docker-compose
@@ -55,9 +57,12 @@ function Mailcow_Install() {
 	fi
 
 	# Bind mailcow to floating IP address
-	sed -i -E 's/^#SNAT_TO_SOURCE=.*$|^SNAT_TO_SOURCE=.*$/SNAT_TO_SOURCE=${FLOATING_IPV4}/g' ./mailcow.conf
+	sed -i -E "s/^#SNAT_TO_SOURCE=.*$|^SNAT_TO_SOURCE=.*$/SNAT_TO_SOURCE=${tf_floating_ipv4}/g" ./mailcow.conf
 	# Disable IP check for acme-mailcow when using floating IP
 	sed -i -E 's/^#SKIP_IP_CHECK=.*$|^SKIP_IP_CHECK=.*$/SKIP_IP_CHECK=y/g' ./mailcow.conf
+
+	# Set umask
+	umask 0077
 }
 
 
@@ -79,6 +84,7 @@ function Mailcow_Update() {
 			docker ps && docker system df
 			echo "Executing - docker system prune"
 			docker system prune && docker system df
+			docker pull hobbsau/borgmatic
 		else
 			echo "No updates are available!"
 			exit 3
@@ -90,49 +96,180 @@ function Mailcow_Update() {
 
 
 function Backup_Install() {
-	#DEFINE GLOBALS
-	mailcow_backup_dir=${MAILCOW_BACKUP_DIR} mailcow_backup_file=${MAILCOW_BACKUP_FILE} mailcow_backup_size=${MAILCOW_BACKUP_SIZE}
-
 	# Check environment 
-	[[ "$${mailcow_backup_dir:-}" && "$${mailcow_backup_file:-}" && "$${mailcow_backup_size:-}" ]] || { echo "Variable not set"; exit 1; }
-
-	#Set volume location
-	mnt_dir=$(echo "$mailcow_backup_dir" |sed -e "s/^\///; s/\/$//; s/\//-/g;")
+	[[ "${backup_dir:-}" && "${backup_file:-}" && "${backup_size:-}" && "${backup_repo:-}" && "${backup_hostkey:-}" && "${backup_sshkey_private:-}" && "${backup_repo_passphrase:-}" ]] || { echo "Variable not set"; exit 1; }
 
 	# Test for backup mount
-	[[ ! -d "$mailcow_backup_dir" ]] && mkdir -p $mailcow_backup_dir
+	[[ ! -d "${backup_dir}" ]] && mkdir -p ${backup_dir} || echo "Backup mount point exists."
 
 	# Test for backup disk and free space and then create backup disk
-	if [[ ! -f "$mailcow_backup_file" && $mailcow_backup_size -lt $(df |grep "/$" |awk '{ print $4/(1024*1024) }' | cut -d. -f1) ]]; then
+	if [[ ! -f "${backup_file}" && ${backup_size} -lt $(df |grep "/$" |awk '{ print $4/(1024*1024) }' | cut -d. -f1) ]]; then
 		# Create disk
-		dd if=/dev/zero of=$mailcow_backup_file bs=1G count=$mailcow_backup_size
-
+		dd if=/dev/zero of=${backup_file} bs=1G count=${backup_size}
 		# Format Disk
-		mkfs.ext4 $mailcow_backup_file
-
+		mkfs.ext4 ${backup_file}
 	else
 		echo "Backup disk exists"
 	fi
 
-	#Install mount script
-	if [[ ! -f "/etc/systemd/system/$mnt_dir.mount" ]]; then
-		echo "[Unit]
-		Description=Mount Backup Volume $mailcow_backup_file
-
-		[Mount]
-		What=$mailcow_backup_file
-		Where=$mailcow_backup_dir
-		Options=defaults,loop,noexec,nosuid,nofail,noatime,rw
-		Type=ext4
-
-		[Install]
-		WantedBy = multi-user.target" | tee /etc/systemd/system/$mnt_dir.mount
-		systemctl daemon-reload
-		systemctl enable $mnt_dir.mount
-		systemctl start $mnt_dir.mount
+	# Install mount
+	if [[ "grep -q ${backup_file} /etc/fstab" ]]; then
+		echo "${backup_file} ${backup_dir} ext4 defaults,loop,noexec,nosuid,nofail,noatime,rw 0 0" | tee -a /etc/fstab
+		systemctl daemon-reload && systemctl restart local-fs.target
 	else
 		echo "Backup volume mount script exists"
 	fi
+
+	# Load Mailcow variables
+	[[ -f /opt/mailcow-dockerized/mailcow.conf ]] && source /opt/mailcow-dockerized/mailcow.conf || { echo "mailcow.conf doesn't exist."; exit 1; }
+	CMPS_PRJ=$(echo ${COMPOSE_PROJECT_NAME} | tr -cd "[A-Za-z-_]")
+
+	# Install borgmatic
+	docker pull hobbsau/borgmatic
+
+	# Add config directories
+	[[ ! -d "/etc/borg" ]] && mkdir -p /etc/borg
+	[[ ! -d "/etc/borgmatic" ]] && mkdir -p /etc/borgmatic
+	[[ ! -d "~/.ssh" ]] && mkdir -p ~/.ssh
+
+	# Install borgmatic conf
+	[[ ! -f "/etc/borgmatic/config.yaml" ]] && echo "Copying borgmatic config" || echo "Overwriting borgmatic config"
+	cat <<-EOF > /etc/borgmatic/config.yaml
+	location:
+	    source_directories:
+	        - /backup
+
+	    repositories:
+	        - ${backup_repo}
+
+	    exclude_patterns:
+	        - 'dovecot-uidlist.lock'
+	        - ~/*/.cache
+
+	    exclude_caches: true
+	    exclude_if_present: .nobackup
+
+	storage:
+	    #compression: auto,zstd
+	    archive_name_format: '{hostname}-{now}'
+
+	retention:
+	    keep_daily: 3
+	    keep_weekly: 4
+	    keep_monthly: 12
+	    keep_yearly: 2
+	    prefix: '{hostname}-'
+
+	consistency:
+	    checks:
+	        # uncomment to always do integrity checks. (takes long time for large repos)
+	        - repository
+	        #- disabled
+
+	    check_last: 3
+	    prefix: '{hostname}-'
+
+	hooks:
+	    # List of one or more shell commands or scripts to execute before creating a backup.
+	    before_backup:
+	        - echo "`date` --- Starting backup ---"
+
+	    after_backup:
+	        - echo "`date` --- Finished backup ---"
+	EOF
+
+	# Install repo key
+	[[ ! -f "/etc/borg/repokey" ]] && echo "Copying repo key" || echo "Overwriting repo key"
+	cat "/opt/scripts/${backup_repo_passphrase}" > /etc/borg/repokey
+	chmod 600 /etc/borg/repokey
+
+	# Install ssh key
+	[[ ! -f "/root/.ssh/id_borg" ]] && echo "Copying ssh id" || echo "Overwriting ssh id"
+	cat "/opt/scripts/${backup_sshkey_private}" > /root/.ssh/id_borg
+	chmod 600 /root/.ssh/id_borg
+
+	# Install borg backup host keys and test
+	local hostname=${backup_repo%:*}; hostname=${hostname#*@};
+	local keytype="$(echo ${backup_hostkey} | awk '{ print $1 }')"
+	local pubkey="$(echo ${backup_hostkey} | awk '{ print $2 }')"
+	[[ $(ssh-keygen -F "${hostname}" |grep "${pubkey}") ]] && echo "Backup host authenticated." || \
+	{ echo "Installing host key."; ssh-keyscan -H -t ${keytype} ${hostname} | tee -a /root/.ssh/known_hosts; }
+
+	# Install borgmatic systemd script
+	[[ ! -f "/etc/systemd/system/borgmatic.service" ]] && echo "Installing systemd borgmatic.service" || echo "Overwriting systemd borgmatic.service"
+	cat <<-EOF > /etc/systemd/system/borgmatic.service
+	[Unit]
+	Description=borg backup
+
+	[Service]
+	Type=oneshot
+	ExecStart=/usr/bin/docker run \
+	  --rm -t --name hobbsau-borgmatic \
+	  -e TZ=${system_tz} \
+	  -e BORG_PASSCOMMAND='cat /root/.config/borg/repokey' \
+	  -e BORG_RSH='ssh -i /root/.ssh/id_borg' \
+	  -v /etc/borg:/root/.config/borg \
+	  -v /var/borgcache:/root/.cache/borg \
+	  -v /etc/borgmatic:/root/.config/borgmatic:ro \
+	  -v /root/.ssh:/root/.ssh \
+	  -v $(docker volume ls -qf name=${CMPS_PRJ}_vmail-vol-1):/backup/vmail:ro \
+	  -v ${backup_dir}:/backup/mailcow:ro \
+	  hobbsau/borgmatic --stats --verbosity 1
+	EOF
+
+	[[ ! -f "/etc/systemd/system/borgmatic.timer" ]] && echo "Installing systemd borgmatic.timer" || echo "Overwriting systemd borgmatic.timer"
+	cat <<-"EOF" > /etc/systemd/system/borgmatic.timer
+	[Unit]
+	Description=Run borg backup
+
+	[Timer]
+	OnCalendar=*-*-* 23:00:00
+	Persistent=true
+
+	[Install]
+	WantedBy=timers.target
+	EOF
+
+	# Install mailcow backup systemd script
+	[[ ! -f "/etc/systemd/system/mcbackup.service" ]] && echo "Installing systemd mcbackup.service" || echo "Overwriting systemd mcbackup.service"
+	cat <<-EOF > /etc/systemd/system/mcbackup.service
+	[Unit]
+	Description=mailcow backup
+
+	[Service]
+	Type=oneshot
+	Environment=MAILCOW_BACKUP_LOCATION=${backup_dir}
+	ExecStart=/opt/mailcow-dockerized/helper-scripts/backup_and_restore.sh backup crypt redis rspamd postfix mysql
+	EOF
+
+	[[ ! -f "/etc/systemd/system/mcbackup.timer" ]] && echo "Installing systemd mcbackup.timer" || echo "Overwriting systemd mcbackup.timer"
+	cat <<-"EOF" > /etc/systemd/system/mcbackup.timer
+	[Unit]
+	Description=Run mcbackup
+
+	[Timer]
+	OnCalendar=*-*-* 22:50:00
+	Persistent=true
+
+	[Install]
+	WantedBy=timers.target
+	EOF
+
+	# Enable systemd services
+	if [[ -f "/etc/systemd/system/borgmatic.service" ]] && [[ -f "/etc/systemd/system/mcbackup.service" ]]; then
+	systemctl daemon-reload
+	systemctl enable borgmatic.timer
+	systemctl start borgmatic.timer
+	systemctl enable mcbackup.timer
+	systemctl start mcbackup.timer
+	fi
+
+}
+
+Mailcow_Backup() {
+
+systemctl start mcbackup.service && systemctl start borgmatic.service
+
 }
 
 while (( "$#" )); do
@@ -149,7 +286,7 @@ while (( "$#" )); do
 		;;
 	mailcow_backup)
 		echo "Mailcow Backup"
-		#Mailcow_Backup
+		Mailcow_Backup
 		shift
 		;;
 	backup_install)
@@ -169,4 +306,4 @@ while (( "$#" )); do
 done
 
 # Flag unhandled arguements
-[[ ! -z "$${PARAMS}" ]] && { echo "Unhandled arguements are: $PARAMS"; exit 1; } || exit 0;
+[[ ! -z "${PARAMS}" ]] && { echo "Unhandled arguments are: $PARAMS"; exit 1; } || exit 0;
