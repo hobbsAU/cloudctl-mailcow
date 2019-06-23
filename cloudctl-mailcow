@@ -267,7 +267,7 @@ while [ "$choice" != x ]; do
         echo -e "\n x.  Exit\n"
         read -p "Enter choice [ 1 - 9 ]: " choice
         case $choice in
-                1) 	server_ssh "sudo /opt/scripts/mailcow.sh mailcow_update" || \
+                1) 	server_ssh "sudo tf_volume_device=\"${ENV_CFG[tf_volume_device]:-}\" /opt/scripts/mailcow.sh mailcow_update" || \
 			{ [[ $? -eq 3 ]] && log "No mailcow updates available."; } || { log "Error updating mailcow!"; }; pause ;;
                 2) 	server_ssh "sudo /opt/scripts/mailcow.sh mailcow_backup" || { log "Error backing up mailcow!"; }; pause ;;
                 3) 	server_ssh "cd /opt/mailcow-dockerized/ && sudo docker-compose pull && sudo docker-compose up -d && sudo docker-compose logs -f --tail=100" || \
@@ -378,6 +378,7 @@ done
 
 # Load configuration and main menu
 read_conf
+read_tf_conf
 menu_main
 
 # Exit gracefully

@@ -19,9 +19,9 @@ function Mailcow_Install() {
 	[[ -f /etc/timezone ]] && export MAILCOW_TZ=`cat /etc/timezone` || { echo "Cannot find timezone"; exit 1; }
 
 	# Guard against udev race condition
-	if [[ $(/bin/findmnt -nr -o target -S $tf_volume_device) ]]; then
+	if [[ $(/bin/findmnt -nr -o target -S ${tf_volume_device}) ]]; then
 		#Set volume location
-		mnt_dir=$(/bin/findmnt -nr -o target -S $tf_volume_device)
+		mnt_dir=$(/bin/findmnt -nr -o target -S ${tf_volume_device})
 	else
 		echo "Error mount not found!"; exit 1;
 	fi
@@ -34,7 +34,7 @@ function Mailcow_Install() {
         chmod +x /usr/local/bin/docker-compose
 
 	# Update Docker storage location
-	echo -e "{  \"data-root\": \"$mnt_dir/docker\" }" | tee /etc/docker/daemon.json
+	echo -e "{  \"data-root\": \"${mnt_dir}/docker\" }" | tee /etc/docker/daemon.json
 	systemctl restart docker
 
 	if [[ -d /opt/mailcow-dockerized ]]; then
@@ -49,11 +49,11 @@ function Mailcow_Install() {
 	cd /opt/mailcow-dockerized && ./generate_config.sh
 
 	# Check for previous config and restore otherwise backup new config required to save DB credentials
-	if [[ -f $mnt_dir/mailcow.conf ]]; then
+	if [[ -f ${mnt_dir}/mailcow.conf ]]; then
 		mv ./mailcow.conf ./mailcow.orig;
-		cp $mnt_dir/mailcow.conf .;
+		cp ${mnt_dir}/mailcow.conf .;
 	else
-		cp mailcow.conf $mnt_dir/;
+		cp mailcow.conf ${mnt_dir}/;
 	fi
 
 	# Bind mailcow to floating IP address
@@ -67,9 +67,19 @@ function Mailcow_Install() {
 
 
 function Mailcow_Update() {
-	echo "Upgrading Mailcow"
+
+	[[ "${tf_volume_device:-}" ]] || { echo "Variable tf_volume_device not set"; exit 1; }
+
+	# Guard against udev race condition
+	if [[ $(/bin/findmnt -nr -o target -S ${tf_volume_device}) ]]; then
+		#Set volume location
+		mnt_dir=$(/bin/findmnt -nr -o target -S ${tf_volume_device})
+	else
+		echo "Error mount not found!"; exit 1;
+	fi
 
         if [[ -d /opt/mailcow-dockerized ]]; then
+		echo "Checking for mailcow updates."
 		cd /opt/mailcow-dockerized && echo 'y' | ./update.sh --check
 
 		if [ $? -eq 0 ]; then
@@ -85,6 +95,8 @@ function Mailcow_Update() {
 			echo "Executing - docker system prune"
 			docker system prune && docker system df
 			docker pull hobbsau/borgmatic
+			[[ -f ${mnt_dir}/mailcow.conf ]] && { mv ${mnt_dir}/mailcow.conf ${mnt_dir}/mailcow.conf.bak; cp /opt/mailcow-dockerized/mailcow.conf ${mnt_dir}/mailcow.conf; } || \
+			{ cp /opt/mailcow-dockerized/mailcow.conf ${mnt_dir}/mailcow.conf; }
 		else
 			echo "No updates are available!"
 			exit 3
@@ -299,11 +311,11 @@ while (( "$#" )); do
 		exit 1
 		;;
 	*) # preserve unhandled arguments
-		PARAMS="$PARAMS $1"
+		PARAMS="${PARAMS} $1"
 		shift
 		;;
 	esac
 done
 
 # Flag unhandled arguements
-[[ ! -z "${PARAMS}" ]] && { echo "Unhandled arguments are: $PARAMS"; exit 1; } || exit 0;
+[[ ! -z "${PARAMS}" ]] && { echo "Unhandled arguments are: ${PARAMS}"; exit 1; } || exit 0;
