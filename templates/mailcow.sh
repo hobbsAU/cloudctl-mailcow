@@ -60,6 +60,10 @@ function Mailcow_Install() {
 	sed -i -E "s/^#SNAT_TO_SOURCE=.*$|^SNAT_TO_SOURCE=.*$/SNAT_TO_SOURCE=${tf_floating_ipv4}/g" ./mailcow.conf
 	# Disable IP check for acme-mailcow when using floating IP
 	sed -i -E 's/^#SKIP_IP_CHECK=.*$|^SKIP_IP_CHECK=.*$/SKIP_IP_CHECK=y/g' ./mailcow.conf
+	# Remove unnecessary and insecure ports
+	#sed -i -E 's/^#SMTPS_PORT=.*$|^SMTPS_PORT=.*$/SMTPS_PORT=127.0.0.1:465/g' ./mailcow.conf
+	sed -i -E 's/^#IMAP_PORT=.*$|^IMAP_PORT=.*$/IMAP_PORT=127.0.0.1:143/g' ./mailcow.conf
+	sed -i -E 's/^#POP_PORT=.*$|^POP_PORT=.*$/POP_PORT=127.0.0.1:110/g' ./mailcow.conf
 
 	# Set umask
 	umask 0077
