@@ -19,7 +19,8 @@ set -xeuo pipefail
 	echo "PS1='$${debian_chroot:+($debian_chroot)}\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '" >>/root/.bashrc
 
 	# Remove unwanted/conflicting packages
-	apt-get purge -y --auto-remove exim4
+	systemctl stop exim4 || echo "Failed to stop exim4"
+	apt-get purge -y --auto-remove exim4 || echo "Failed to remove exim4"
 
 	# Hetzner networking changes (fix ethernet and move to static IP to disable DHCP)
 	sed -i 's/eth0:0/eth0/g' /etc/network/interfaces.d/50-cloud-init.cfg
