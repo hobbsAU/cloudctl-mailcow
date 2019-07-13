@@ -40,40 +40,44 @@ declare -A ENV_CFG
 
 function read_conf() {
 
-# Check for config file
-[[ -f "${ENV_FILE:-}" ]] && log "Reading config.." || { show_help; exit 1; }
+	# Check for config file
+	[[ -f "${ENV_FILE:-}" ]] && log "Reading config.." || { show_help; exit 1; }
 
-# Check if the config file contains something we don't want
-[[ "${EGREP_BIN} -q -iv '(^\s*#|^\s*$|^\s*[a-z_][^[:space:]]*=\"[^;&\(\`]*\"$)' "${ENV_FILE}"" ]] || { log "Config file is corrupt, please check it..."; exit 1; }
+	# Check if the config file contains something we don't want
+	[[ "${EGREP_BIN} -q -iv '(^\s*#|^\s*$|^\s*[a-z_][^[:space:]]*=\"[^;&\(\`]*\"$)' "${ENV_FILE}"" ]] || { log "Config file is corrupt, please check it..."; exit 1; }
 
-# Parse the config file converting to simple key value pair and stripping quotes
-for item in $(${AWK_BIN} 'BEGIN {FS=OFS="="} !/^(#| *$)/ && /^.+=.+$/ \
-{ gsub(/^[ \t]+|[ \t]+$/, "", $1); gsub(/\./, "_", $1); gsub(/^[ \t]+|[ \t]+$/, "", $2); gsub(/"/, "", $2);gsub(/"/, "", $2);  if ($1 && $2) print $0 }' ${ENV_FILE})
-do
-	key=${item%=*}
-	value=${item#*=}
-	ENV_CFG[${key}]=${value}
-	#[[ ${key} == TF_VAR* ]] && { export $(printf "%q=\"%q\"\n" "${key}" "${ENV_CFG[${key}]}"); }
-	[[ ${key} == TF_VAR* ]] && { export ${key}=${value}; }
-done
-		((DEBUG)) && { for x in "${!ENV_CFG[@]}"; do printf "%q=\"%q\"\n" "$x" "${ENV_CFG[$x]}" ; done; pause; } || echo
-}
-
-function read_tf_conf() {
-if [[ $(terraform output 2>/dev/null) ]]; then
-
-# Parse the config converting to simple key value pair and stripping quotes
-	for item in $($AWK_BIN 'BEGIN {FS=OFS="="} !/^(#| *$)/ && /^.+=.+$/ \
-	{ gsub(/^[ \t]+|[ \t]+$/, "", $1); gsub(/\./, "_", $1); gsub(/^[ \t]+|[ \t]+$/, "", $2); \
-	gsub(/"/, "", $2);gsub(/"/, "", $2);  if ($1 && $2) print $0 }' <<<$(terraform output))
+	# Parse the config file converting to simple key value pair and stripping quotes
+	for item in $(${AWK_BIN} 'BEGIN {FS=OFS="="} !/^(#| *$)/ && /^.+=.+$/ \
+	{ gsub(/^[ \t]+|[ \t]+$/, "", $1); gsub(/\./, "_", $1); gsub(/^[ \t]+|[ \t]+$/, "", $2); gsub(/"/, "", $2);gsub(/"/, "", $2);  if ($1 && $2) print $0 }' ${ENV_FILE})
 	do
 		key=${item%=*}
 		value=${item#*=}
-		ENV_CFG[$key]=${value}
+		ENV_CFG[${key}]=${value}
+		#[[ ${key} == TF_VAR* ]] && { export $(printf "%q=\"%q\"\n" "${key}" "${ENV_CFG[${key}]}"); }
+		[[ ${key} == TF_VAR* ]] && { export ${key}=${value}; }
 	done
-fi
+			((DEBUG)) && { for x in "${!ENV_CFG[@]}"; do printf "%q=\"%q\"\n" "$x" "${ENV_CFG[$x]}" ; done; pause; } || echo
+}
 
-((DEBUG)) && { for x in "${!ENV_CFG[@]}"; do printf "%q=\"%q\"\n" "$x" "${ENV_CFG[$x]}"; done; } || echo
+function read_tf_conf() {
+
+	# Check we are in the correct TF workspace otherwise create one
+	${TF_BIN} workspace \select "${ENV_CFG[TF_WORKSPACE]:-}" 2>/dev/null || \
+	{ log "Creating workspace.."; [[ $(${TF_BIN} workspace new ${ENV_CFG[TF_WORKSPACE]:-} 2>/dev/null) ]] || { log "Failed to create workspace"; exit 1; }; }
+
+	if [[ $(${TF_BIN} output 2>/dev/null) ]]; then
+		# Parse the config converting to simple key value pair and stripping quotes
+		for item in $($AWK_BIN 'BEGIN {FS=OFS="="} !/^(#| *$)/ && /^.+=.+$/ \
+		{ gsub(/^[ \t]+|[ \t]+$/, "", $1); gsub(/\./, "_", $1); gsub(/^[ \t]+|[ \t]+$/, "", $2); \
+		gsub(/"/, "", $2);gsub(/"/, "", $2);  if ($1 && $2) print $0 }' <<<$(${TF_BIN} output))
+		do
+			key=${item%=*}
+			value=${item#*=}
+			ENV_CFG[$key]=${value}
+		done
+	fi
+
+	((DEBUG)) && { for x in "${!ENV_CFG[@]}"; do printf "%q=\"%q\"\n" "$x" "${ENV_CFG[$x]}"; done; } || echo
 }
 
 function show_help() {
@@ -115,11 +119,8 @@ function confirm() {
 function server_ssh() {
 local error_code=0
 
-	# Refresh config
-	read_tf_conf
-	
 	# Check if server is known
-	if [[ "${ENV_CFG[tf_host_ipv4]:-}" && $(${TF_BIN} state show hcloud_server.mailcow 2>/dev/null) ]]; then
+	if [[ "${ENV_CFG[tf_host_ipv4]:-}" && "client_terraform "check_state"" ]]; then
 		local args=(-o "StrictHostKeyChecking no" -p ${ENV_CFG[TF_VAR_system_ssh_port]:-} -i ${ENV_CFG[TF_VAR_hcloud_sshkey_private]:-} ${ENV_CFG[TF_VAR_system_ssh_user]:-}@${ENV_CFG[tf_host_ipv4]:-})
 	else
 		log "Server not available - please create one."; return 1;
@@ -142,17 +143,20 @@ local error_code=0
 
 function client_terraform() {
 	
-	# Refresh config
-	read_tf_conf
-	
 	# Check for parameters
 	[[ $# -eq 0 ]] && { log "Function requires paramaters."; return 1; }
 
 	# Check for parameters to determine what we need to do
 while (( "$#" )); do
 	case "$1" in
+	check_state)
+		log "Checking for server."
+		[[ $(${TF_BIN} state show hcloud_server.mailcow 2>/dev/null) ]] || { log "Error checking for server!"; return 1; };
+		shift
+		;;
 	deploy_all)
 		log "Deploying all terraform items."
+		${TF_BIN} plan && { confirm "Are you sure you would like to continue? [y/N] " || return 1; }
 		${TF_BIN} apply -auto-approve || { log "Error deploying!"; return 1; };
 		shift
 		;;
@@ -189,6 +193,9 @@ while (( "$#" )); do
 		;;
 	esac
 done
+
+	# Refresh config
+	read_tf_conf
 	
 }
 
@@ -196,7 +203,7 @@ function server_backup() {
 local env_vars=""
 
 	# Check server exists
-	[[ $(${TF_BIN} state show hcloud_server.mailcow 2>/dev/null) ]] || { log "Server doesn't exist!"; return 1; };
+	[[ "client_terraform "check_state"" ]] || { log "Server doesn't exist!"; return 1; };
 
 	# Copy over keyfiles
 	server_ssh "sudo tee /opt/scripts/${ENV_CFG[backup_sshkey_private]}" <${ENV_CFG[keyfile_sshkey_private]}
@@ -210,12 +217,9 @@ local env_vars=""
 
 function server_mailcow() {
 local env_vars=""
-
-	# Refresh config
-	read_tf_conf
 	
 	# Check server exists
-	[[ $(${TF_BIN} state show hcloud_server.mailcow 2>/dev/null) ]] || { log "Server doesn't exist!"; return 1; };
+	[[ "client_terraform "check_state"" ]] || { log "Server doesn't exist!"; return 1; };
 
 	# Install Mailcow
 	env_vars="tf_dns_ptr=\"${ENV_CFG[tf_dns_ptr]:-}\" tf_volume_device=\"${ENV_CFG[tf_volume_device]:-}\" tf_floating_ipv4=\"${ENV_CFG[tf_floating_ipv4]:-}\""
