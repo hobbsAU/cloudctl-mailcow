@@ -1,5 +1,8 @@
 # mailcow.conf - all variables defined here
 
+# Terraform Workspace
+TF_WORKSPACE="dev"
+
 # Hcloud secrets
 # Note: Hetzner Cloud Access Token must be obtained from the website
 # Note: SSH keys should be labelled as follows: id_<key_algorithm>_<servername>_<purpose>.<scope> --> id_ed25519_server_borg.pvt
