@@ -97,7 +97,7 @@ function Mailcow_Update() {
 			echo "Check containers are running"
 			docker ps && docker system df
 			echo "Executing - docker system prune"
-			docker system prune && docker system df
+			docker system prune -f && docker system df
 			docker pull hobbsau/borgmatic
 			[[ -f ${mnt_dir}/mailcow.conf ]] && { mv ${mnt_dir}/mailcow.conf ${mnt_dir}/mailcow.conf.bak; cp /opt/mailcow-dockerized/mailcow.conf ${mnt_dir}/mailcow.conf; } || \
 			{ cp /opt/mailcow-dockerized/mailcow.conf ${mnt_dir}/mailcow.conf; }
@@ -180,6 +180,7 @@ function Backup_Install() {
 	    checks:
 	        # uncomment to always do integrity checks. (takes long time for large repos)
 	        - repository
+	        - archives
 	        #- disabled
 
 	    check_last: 3
@@ -220,7 +221,7 @@ function Backup_Install() {
 	[Service]
 	Type=oneshot
 	ExecStart=/usr/bin/docker run \
-	  --rm -t --name hobbsau-borgmatic \
+	  --rm -t --name hobbsau-borgmatic --hostname %H \
 	  -e TZ=${system_tz} \
 	  -e BORG_PASSCOMMAND='cat /root/.config/borg/repokey' \
 	  -e BORG_RSH='ssh -i /root/.ssh/id_borg' \
