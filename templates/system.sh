@@ -17,6 +17,7 @@ set -xeuo pipefail
 	sed -i -e '/^# export LS_OPTIONS/s/^#//' /root/.bashrc
 	sed -i -e '/^# alias ll/s/-l/-al/' -e '/^# alias ll/s/^#//' /root/.bashrc
 	echo "PS1='$${debian_chroot:+($debian_chroot)}\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '" >>/root/.bashrc
+	echo -e "set mouse-=a\nsyntax on" > ~/.vimrc
 
 	# Remove unwanted/conflicting packages
 	systemctl stop exim4 || echo "Failed to stop exim4"
