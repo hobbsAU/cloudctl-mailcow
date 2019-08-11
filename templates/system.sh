@@ -37,6 +37,10 @@ set -xeuo pipefail
 	chmod 0644 /etc/network/interfaces.d/60-my-floating-ip.cfg
 	systemctl daemon-reload; systemctl restart networking.service
 
+	# Clear out old ssh keys
+	/bin/rm -v /etc/ssh/ssh_host_*
+	dpkg-reconfigure -f noninteractive openssh-server
+
 	# Configure SSH umask
 	if [[ "grep -q 'session    optional     pam_umask.so umask=0077' /etc/pam.d/sshd" ]];  then
 	cat <<-EOF >> /etc/pam.d/sshd
@@ -77,11 +81,6 @@ set -xeuo pipefail
 	AuthenticationMethods publickey
 	EOF
         chmod 0400 /etc/ssh/sshd_config
-        systemctl restart sshd.service
-
-	# Clear out old ssh keys
-	/bin/rm -v /etc/ssh/ssh_host_*
-	dpkg-reconfigure openssh-server
         systemctl restart sshd.service
 
 	# Install and configure fail2ban
