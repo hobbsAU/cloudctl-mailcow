@@ -21,7 +21,7 @@ set -xeuo pipefail
 
 	# Remove unwanted/conflicting packages
 	systemctl stop exim4 || echo "Failed to stop exim4"
-	apt-get purge -y --auto-remove exim4 || echo "Failed to remove exim4"
+	apt-get purge -y --auto-remove exim4* || echo "Failed to remove exim4"
 
 	# Hetzner networking changes (fix ethernet and move to static IP to disable DHCP)
 	sed -i 's/eth0:0/eth0/g' /etc/network/interfaces.d/50-cloud-init.cfg
