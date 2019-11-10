@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# A menu driven shell script to provision and manage mailcow
+## A menu driven shell script to provision and manage mailcow
 
 # Set Bash strict modes
 set -o errexit 
